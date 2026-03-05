@@ -1,0 +1,146 @@
+# config.yaml
+# Central configuration for the full PFO-RS pipeline (train / eval / explain)
+
+project:
+  name: "pfo-rs-smart-agri"
+  seed: 42
+  deterministic: true
+
+paths:
+  data_dir: "data"
+  dataset_csv: "data/dataset.csv"          # <-- set your dataset file name here
+  outputs_dir: "outputs"
+  models_dir: "outputs/models"
+  results_dir: "outputs/results"
+  explanations_dir: "outputs/explanations"
+
+data:
+  target_col: "label"                      # crop label column (classification)
+  # Optional (only if your dataset contains a numeric yield column)
+  use_yield_regression: false
+  yield_col: "yield"
+
+  # If there are non-feature columns (IDs, timestamps, district names, etc.), list them here
+  drop_cols: []
+
+  # Train/Val/Test split (stratified on target_col when possible)
+  split:
+    test_size: 0.20
+    val_size: 0.15                         # fraction of remaining train after test split
+    stratify: true
+    shuffle: true
+
+  # Preprocessing
+  missing:
+    numeric_strategy: "median"             # median | mean
+    categorical_strategy: "most_frequent"  # most_frequent | constant
+    categorical_constant: "unknown"
+
+  scaling:
+    numeric_scaler: "standard"             # standard | minmax
+  encoding:
+    categorical: "onehot"                  # onehot only (kept minimal + stable)
+
+feature_selection:
+  enabled: true
+  method: "pfo"                            # pfo (Permutation Flamingo Optimization)
+  # If enabled=false, the model will use all features after preprocessing.
+
+pfo:
+  # Core optimization settings
+  population_size: 24
+  iterations: 30
+  # Subset decoding from permutation:
+  # - "topk": take first k features of permutation
+  # - "threshold": keep features whose rank score passes threshold (internally derived)
+  decode_mode: "topk"
+  topk:
+    min_k: 6
+    max_k: 20
+    # If k_selection="adaptive", FOA chooses k inside [min_k, max_k] using fitness tradeoff
+    k_selection: "adaptive"                # adaptive | fixed
+    fixed_k: 12
+
+  # Fitness tradeoff
+  # objective = val_loss + lambda_size*(k/num_features) + gamma_stability*(1 - stability_score)
+  lambda_size: 0.15
+  gamma_stability: 0.10
+
+  # Stability estimation (lightweight; keeps code reviewer-friendly)
+  stability:
+    enabled: true
+    topk_features_for_stability: 10
+    n_bootstrap: 5                         # keep small for speed
+
+model:
+  type: "lstm_classifier"
+  # If your data is tabular (one row per sample), the implementation will treat it as
+  # a short "pseudo-sequence" with seq_len=1 by default (keeps LSTM usage consistent).
+  sequence:
+    enabled: false
+    seq_len: 1                             # used only if sequence.enabled=true
+    # If you have time-window features already stacked, you can enable sequence mode.
+
+  lstm:
+    input_dropout: 0.10
+    hidden_size: 96
+    num_layers: 2
+    dropout: 0.20                          # applied between LSTM layers when num_layers>1
+    bidirectional: false
+
+  head:
+    mlp_hidden: 64
+    mlp_dropout: 0.20
+
+training:
+  epochs: 40
+  batch_size: 64
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  optimizer: "adam"                        # adam only (minimal)
+  scheduler:
+    enabled: true
+    type: "reduce_on_plateau"
+    factor: 0.5
+    patience: 4
+    min_lr: 1.0e-5
+
+  early_stopping:
+    enabled: true
+    patience: 8
+    min_delta: 0.0005
+
+  device: "auto"                           # auto | cpu | cuda
+  num_workers: 0                           # keep 0 for Windows compatibility
+
+evaluation:
+  # Classification metrics always computed
+  classification:
+    average: "weighted"                    # weighted | macro
+  # Regression metrics computed only if use_yield_regression=true
+  regression:
+    enabled: false
+
+explainability:
+  enabled: true
+  # Number of background samples used by SHAP (kept small for runtime)
+  shap:
+    enabled: true
+    background_samples: 200
+    explain_samples: 50
+    max_display: 15
+
+  lime:
+    enabled: true
+    explain_samples: 10
+    num_features: 10
+    num_samples: 3000
+
+logging:
+  save_config_copy: true
+  verbose: true
+  artifacts:
+    save_metrics_json: true
+    save_confusion_matrix_png: true
+    save_feature_list_txt: true
+    save_selected_feature_mask: true
